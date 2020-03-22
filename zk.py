@@ -14,6 +14,7 @@ from typing import *
 import note_folder as NF
 from note_folder import NoteFiles
 from note_folder import NotesDirectory
+import daily
 
 log = logging.getLogger(__name__)
 ZK_DIR = None
@@ -57,25 +58,6 @@ class NoteDatabase:
                 major_notes.add(note)
         return major_notes
 
-
-    def set_card_as_daily_card(self, card_name: str, date: dt.date):
-        # @Question: Does the foreign key restriction raise an exception, if it doesn't exists?
-        cursor = self._database_handle.cursor()
-        args = (date.strftime('%F'), card_name)
-        cursor.execute('insert into daily_notes(card_date, card_name) values (?, ?)', args)
-        cursor.close()
-
-
-    def daily_card_for_date(self, date: dt.date) -> Optional[str]:
-        date_filter = (date.strftime('%F'),)
-        cursor = self._database_handle.cursor()
-        cursor.execute('select card_name from daily_notes where card_date = ?', date_filter)
-        the_daily_card = cursor.fetchone()
-        cursor.close()
-
-        if the_daily_card:
-            return the_daily_card[0]
-        return None
 
     def save_card(self, card_name: str, card_path: str):
         notes = find_open_notes()
@@ -153,39 +135,6 @@ def parse_restrictions(restrictions_file_content: str) -> List[Tuple[str, int, i
             restrictions.append((hostname, from_idx, to_idx))
 
     return restrictions
-
-
-def _smart_date(human_input):
-    date = dt.date.today()
-    words = ' '.join(human_input).lower().split()
-
-    weekdays_short = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
-    weekdays_long  = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-    weekdays = weekdays_short + weekdays_long
-
-    day = dt.timedelta(days=1)
-
-    if len(words) == 0 or words[0] == 'today':
-        return date
-    elif words[0] == 'yesterday':
-        return date - dt.timedelta(days=1)
-    elif words[0] == 'tomorrow':
-        return date + dt.timedelta(days=1)
-    elif words[0] == 'next' and words[1] in weekdays:
-        while range(7):
-            date = date + dt.timedelta(days=1)
-            short, long = date.strftime('%a %A').lower().split()
-            if words[1] in [short, long]:
-                return date
-    elif words[0] == 'last':
-        date = date - dt.timedelta(days=1)
-        while range(7):
-            date = date - dt.timedelta(days=1)
-            short, long = date.strftime('%a %A').lower().split()
-            if words[1] in [short, long]:
-                return date
-
-    raise ValueError('Invalid date string')
 
 
 def check_database(database_path: str) -> bool:
@@ -373,42 +322,9 @@ def get_branching_sub_level_card_name(major_or_sibling_card_name: str) -> Option
         return f'{major_card}{next_sibling}'
 
 
-def find_existing_daily_note(date: dt.date, *, app: Notes) -> Optional[str]:
-    all_notes = app.open_notes.find_major_notes()
-    expected_first_line = date.strftime('%F Daily')
-
-    daily_note = None
-    for note in all_notes:
-        card_path = app.open_notes.fullpath_of_open_card(note)
-        with open(card_path, 'r') as fd:
-            content = fd.read(len(expected_first_line))
-
-        if content == expected_first_line:
-            found_daily_note = card_path
-            break
-    else:
-        return None
-
-    return os.path.basename(found_daily_note)
-
-
 def create_new_open_card(content: str, app: Notes) -> str:
     card_name = next_available_major_note(app.open_notes, app.persistent_notes)
     card_path = app.open_notes.create_new_card(card_name=card_name, content=content)
-    return card_path
-
-
-def open_daily_card(date: dt.date, *, app: Notes) -> str:
-    """ Open either existing daily note, or create a new card. """
-    all_notes = app.open_notes.find_major_notes()
-    expected_first_line = date.strftime('%F Daily')
-
-    card_path = find_existing_daily_note(date, app=app)
-    if not card_path:
-        content = date.strftime('%F Daily\n\n\n')
-        card_name = next_available_major_note(app.open_notes, app.persistent_notes)
-        card_path = app.open_notes.create_new_card(card_name=card_name, content=content)
-
     return card_path
 
 
@@ -477,8 +393,16 @@ if __name__ == '__main__':
         else:
             raise RuntimeError("Too many notes for this major card. The sub-card 'z' already exists.")
     elif subcommand == 'daily':
-        date = _smart_date(args)
-        card_path = open_daily_card(date, app=notes)
+        # Saves the card immediately into the database
+        date = daily.smart_date(args)
+        card_name = daily.daily_card_name(date, notes.database_handle)
+        if not card_name:
+            content = date.strftime('%F Daily\n\n\n')
+            card_path = create_new_open_card(content=content, app=notes)
+            card_name = os.path.basename(card_path)
+            daily.set_the_daily_card(card_name, date, notes.database_handle)
+        else:
+            card_path = notes.open_notes.fullpath_of_open_card(card_name)
         open_editor(card_path)
     elif subcommand == 'save':
         save_open_notes_into_database(app=notes)
