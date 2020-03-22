@@ -216,6 +216,10 @@ class Notes:
     def persistent_notes(self):
         return self._card_storage
 
+    @property
+    def database_handle(self):
+        return self._sqlite_connection
+
 
 def parse_restrictions(restrictions_file_content: str) -> List[Tuple[str, int, int]]:
     """ Read restrictions file
@@ -243,25 +247,6 @@ def parse_restrictions(restrictions_file_content: str) -> List[Tuple[str, int, i
             restrictions.append((hostname, from_idx, to_idx))
 
     return restrictions
-
-
-for directory in ALL_ZK_DIR:
-    if os.path.isdir(directory):
-        ZK_DIR = directory
-        ZK_DB = os.path.dirname(ZK_DIR) + '/zk.db'
-        break
-
-
-def database_is_initialized():
-    if not os.path.isfile(ZK_DB):
-        return False
-
-    with sqlite3.connect(ZK_DB) as db:
-        cur = db.cursor()
-        cur.execute('select 1')
-        result = cur.fetchone()[0]
-
-    return (result == 1)
 
 
 def _smart_date(human_input):
@@ -310,16 +295,22 @@ def check_open_notes_directory(database_handle: sqlite3.Connection) -> str:
     """
     cursor = database_handle.cursor()
     cursor.execute('select absolute_path from default_directory;')
-    notes_directory_row = cursor.fetchall()
+    notes_folder_row = cursor.fetchone()
     cursor.close()
 
-    if notes_directory_row and os.path.isdir(notes_directory_row[0]):
-        return notes_directory_row[0]
+    if notes_folder_row and os.path.isdir(notes_folder_row[0]):
+        note_folder = notes_folder_row[0]
+        if not os.path.isdir(note_folder):
+            raise EnvironmentError(f'The notes folder {note_folder} does not exists!')
+        return note_folder
+
     return os.getcwd()
 
 
 def populate_missing_note_entries_to_database():
-    """ Add open notes in ZK_DIR and add them into database is missing """
+    """ Add open notes in ZK_DIR and add them into database is missing
+    @DeadCode: Merge with the database class
+    """
     notes = find_open_notes()
 
     with sqlite3.connect(ZK_DB) as db:
@@ -349,6 +340,24 @@ def save_open_notes_into_database(app: Notes):
     for card_name in app.open_notes.find_all_notes():
         card_path = app.open_notes.fullpath_of_open_card(card_name)
         app.persistent_notes.save_card(card_name, card_path)
+
+
+def remove_default_location(app: Notes):
+    with app.database_handle as db:
+        cursor = db.cursor()
+        cursor.execute('delete from default_directory')
+        db.commit()
+
+
+def set_default_location(app: Notes, note_folder: str):
+    if not os.path.isdir(note_folder):
+        raise EnvironmentError('The folder is missing')
+
+    with app.database_handle:
+        args = (os.path.abspath(note_folder),)
+        cursor = app.database_handle.cursor()
+        cursor.execute('delete from default_directory')
+        cursor.execute('insert into default_directory(absolute_path) values (?)', args)
 
 
 def pack_open_notes_into_database(app: Notes):
@@ -497,20 +506,7 @@ def open_daily_card(date: dt.date, *, app: Notes) -> str:
     return card_path
 
 
-def initialize_database(database_path: str):
-    if database_is_initialized():
-        return
-
-    with sqlite3.connect(ZK_DB) as db, open(SCHEMA_PATH, 'r') as schema:
-        cursor = db.cursor()
-        schema_sql = schema.read()
-        cursor.executescript(schema_sql)
-    create_and_initialize_database_file(database_path)
-    # populate_missing_note_entries_to_database()
-
-
 if __name__ == '__main__':
-    # Read args the database location
     assert sys.argv[1] == '--database'
     database_path = sys.argv[2]
     assert str(database_path)
@@ -552,6 +548,9 @@ if __name__ == '__main__':
     with sqlite3.connect(database_path) as connection_handle:
         note_folder = check_open_notes_directory(connection_handle)
 
+    # @Todo: remove all references to ZK_DB and ZK_DIR
+    ZK_DB, ZK_DIR = database_path, note_folder
+
     app = notes = Notes(directory_path=note_folder, database_path=database_path)
     open_notes = app.open_notes
     persistent_notes = app.persistent_notes
@@ -589,6 +588,10 @@ if __name__ == '__main__':
         elif args[0] == 'new':
             cards = app.open_notes.new_cards(app.persistent_notes)
             print('New cards: ' + str(sorted(cards)))
-    elif subcommand == 'init':
-        pass
-
+    elif subcommand == '--set-default-directory':
+        set_default_location(notes, args[0])
+    elif subcommand == '--remove-default-directory':
+        remove_default_location(notes)
+    else:
+        log.info('No command given')
+        print('No command given')
