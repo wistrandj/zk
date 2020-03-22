@@ -60,8 +60,10 @@ class NoteFiles:
         modified_utc_ns = int(modified_utc * seconds_to_nanoseconds)
         os.utime(card_path, times=None, ns=(access_utc_ns, modified_utc_ns), follow_symlinks=True)
 
-    def create_new_card(self, card_name: str, content: Union[str, bytes]):
-        """ Create a new card """
+    def create_new_card(self, card_name: str, content: Union[str, bytes]) -> str:
+        """ Create a new card
+        :return: Filepath to the new card
+        """
         card_path = self.fullpath_of_open_card(card_name)
         if os.path.isfile(card_path):
             raise RuntimeError(f'Card exists: {card_path}')
