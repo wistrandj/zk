@@ -1,0 +1,6 @@
+#!/bin/bash
+
+D='/usr/local/src/external/toybox/14'
+
+python3 "$D/zk.py" $@
+
