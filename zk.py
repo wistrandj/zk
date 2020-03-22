@@ -19,8 +19,6 @@ from note_database import NoteDatabase
 import daily
 
 log = logging.getLogger(__name__)
-ZK_DIR = None
-ZK_DB = None
 
 
 class Notes:
@@ -96,26 +94,19 @@ def pack_open_notes_into_database(app: Notes):
     """ Save files into database and remove all files """
     save_open_notes_into_database(app)
     notes = app.open_notes.find_all_notes()
-    for note in notes:
-        filepath = os.path.join(ZK_DIR, note)
-        os.unlink(filepath)
+    for card_name in notes:
+        card_path = app.open_notes.fullpath_of_open_card(card_name)
+        os.unlink(card_path)
 
 
 def unpack_open_notes_from_database(app: Notes):
-    with sqlite3.connect(ZK_DB) as db:
-        cursor = db.cursor()
-        cursor.execute('select name, content, created_utc, modified_utc from notes;')
-        for row in cursor.fetchall():
-            card_name, content, created_utc, modified_utc = row
-            card_name, content, created_utc, modified_utc = str(card_name), bytes(content), int(created_utc), int(modified_utc)
+    cursor = app.database_handle.cursor()
+    cursor.execute('select name, content, created_utc, modified_utc from notes;')
+    for row in cursor.fetchall():
+        card_name, content, created_utc, modified_utc = row
+        card_name, content, created_utc, modified_utc = str(card_name), bytes(content), int(created_utc), int(modified_utc)
 
-            app.open_notes.create_card_with_modified_time(card_name=card_name, content=content, modified_utc=modified_utc)
-            continue
-            name = card_name
-            filename = os.path.join(ZK_DIR, name)
-            if not os.path.isfile(filename):
-                with open(filename, 'wb') as fd:
-                    fd.write(bytes(content))
+        app.open_notes.create_card_with_modified_time(card_name=card_name, content=content, modified_utc=modified_utc)
 
 
 def hostname():
@@ -167,9 +158,6 @@ if __name__ == '__main__':
 
     with sqlite3.connect(database_path) as connection_handle:
         note_folder = check_open_notes_directory(connection_handle)
-
-    # @Todo: remove all references to ZK_DB and ZK_DIR
-    ZK_DB, ZK_DIR = database_path, note_folder
 
     app = notes = Notes(directory_path=note_folder, database_path=database_path)
     open_notes = app.open_notes
