@@ -24,10 +24,7 @@ ALL_ZK_DIR = [
 ]
 ZK_DIR = None
 ZK_DB = None
-ZK_RESTRICTIONS  = None
 SCHEMA_PATH = '/usr/local/src/toybox/14/schema.sql'
-
-RESTRICTIONS = None
 
 class NotesDirectory:
     def __init__(self, directory: str):
@@ -95,7 +92,7 @@ class NoteFiles:
 
         return card_path
 
-    def modified_cards(self, persistent_notes: 'PersistentNotes') -> Set[str]:
+    def modified_cards(self, persistent_notes: 'NoteDatabase') -> Set[str]:
         open_cards = self.find_all_notes()
         seconds_to_nanoseconds = 10**9
         modified_cards = set()
@@ -111,13 +108,13 @@ class NoteFiles:
 
         return modified_cards
 
-    def new_cards(self, persistent_notes: 'PersistentNotes') -> Set[str]:
+    def new_cards(self, persistent_notes: 'NoteDatabase') -> Set[str]:
         open_cards = self.find_all_notes()
         persistent_cards = persistent_notes.find_all_notes()
         return open_cards.difference(persistent_cards)
 
 
-class PersistentNotes:
+class NoteDatabase:
     IS_MAJOR_NUMBER = re.compile('^[0-9]+$')
     IS_ANY_NOTE = re.compile('^[0-9]+|[0-9]+[a-z]|[0-9]+([a-z][0-9]+)+')
 
@@ -137,7 +134,7 @@ class PersistentNotes:
         major_notes = set()
         for note in notes_in_database:
             note = note[0]
-            if PersistentNotes.IS_MAJOR_NUMBER.match(note):
+            if NoteDatabase.IS_MAJOR_NUMBER.match(note):
                 major_notes.add(note)
         return major_notes
 
@@ -150,7 +147,7 @@ class PersistentNotes:
         major_notes = set()
         for note in notes_in_database:
             note = note[0]
-            if PersistentNotes.IS_ANY_NOTE.match(note):
+            if NoteDatabase.IS_ANY_NOTE.match(note):
                 major_notes.add(note)
         return major_notes
 
@@ -209,7 +206,7 @@ class Notes:
         self._sqlite_connection = sqlite3.connect(database_path)
         self._directory = NotesDirectory(directory_path)
         self._card_files = NoteFiles(self._directory)
-        self._card_storage = PersistentNotes(self._sqlite_connection)
+        self._card_storage = NoteDatabase(self._sqlite_connection)
 
     @property
     def open_notes(self):
@@ -252,11 +249,6 @@ for directory in ALL_ZK_DIR:
     if os.path.isdir(directory):
         ZK_DIR = directory
         ZK_DB = os.path.dirname(ZK_DIR) + '/zk.db'
-        ZK_RESTRICTIONS = os.path.dirname(ZK_DIR) + '/zk.restrictions'
-
-        if os.path.isfile(ZK_RESTRICTIONS):
-            RESTRICTIONS = parse_restrictions(ZK_RESTRICTIONS)
-
         break
 
 
@@ -305,14 +297,25 @@ def _smart_date(human_input):
     raise ValueError('Invalid date string')
 
 
-def create_and_initialize_database_file():
-    if database_is_initialized():
-        return
+def check_database(database_path: str) -> bool:
+    """ Check if there's an notes database in the path of giben argument
+    @Robustness: Doesn't check if the database is readable and all tables
+    """
+    return os.path.isfile(database_path)
 
-    with sqlite3.connect(ZK_DB) as db, open(SCHEMA_PATH, 'r') as schema:
-        cursor = db.cursor()
-        schema_sql = schema.read()
-        cursor.executescript(schema_sql)
+
+def check_open_notes_directory(database_handle: sqlite3.Connection) -> str:
+    """ Return the directory to open notes. It can be either saved in the database, or current working directory.
+    @Robustness: Not exception safe and doesn't check if the directory is writable
+    """
+    cursor = database_handle.cursor()
+    cursor.execute('select absolute_path from default_directory;')
+    notes_directory_row = cursor.fetchall()
+    cursor.close()
+
+    if notes_directory_row and os.path.isdir(notes_directory_row[0]):
+        return notes_directory_row[0]
+    return os.getcwd()
 
 
 def populate_missing_note_entries_to_database():
@@ -402,7 +405,7 @@ def create_card_and_open_editor(card_name: str, content: Optional[str]=None):
     os.system("vim -c 'normal! jj' " + filepath)
 
 
-def next_available_major_note(open_files: NoteFiles, store: PersistentNotes) -> str:
+def next_available_major_note(open_files: NoteFiles, store: NoteDatabase) -> str:
     """ Return next available number that can be used for the next note. """
     files = open_files.find_major_notes()
     db_notes = store.find_major_notes()
@@ -495,19 +498,61 @@ def open_daily_card(date: dt.date, *, app: Notes) -> str:
 
 
 def initialize_database(database_path: str):
+    if database_is_initialized():
+        return
+
+    with sqlite3.connect(ZK_DB) as db, open(SCHEMA_PATH, 'r') as schema:
+        cursor = db.cursor()
+        schema_sql = schema.read()
+        cursor.executescript(schema_sql)
     create_and_initialize_database_file(database_path)
     # populate_missing_note_entries_to_database()
 
 
 if __name__ == '__main__':
-    subcommand = sys.argv[1]
-    args = sys.argv[2:]
-    print(f'Hi {ZK_DB} and {ZK_DIR}')
+    # Read args the database location
+    assert sys.argv[1] == '--database'
+    database_path = sys.argv[2]
+    assert str(database_path)
+    subcommand = sys.argv[3]
+    args = sys.argv[4:]
 
-    # Initialize the database first
-    main()
+    # @Note: Database initialization, execute with subcommands 'init' or 'init-sql <number>'
+    sql_script = None
+    if subcommand == 'init':
+        developing_directory = os.path.dirname(sys.argv[0])
+        sql_directory = os.path.join(developing_directory, 'sql')
+        sql_script = os.path.join(sql_directory, 'schema.sql')
+    elif subcommand == 'init-sql':
+        # Temporary command for developing. Later: merge sql files into single file
+        developing_directory = os.path.dirname(sys.argv[0])
+        sql_directory = os.path.join(developing_directory, 'sql')
+        sql_number = int(args[0])
+        if sql_number > 0:
+            sql_script = os.path.join(sql_directory, f'schema.{sql_number}.sql')
+    if sql_script:
+        if not os.path.isfile(sql_script):
+            raise EnvironmentError('Invalid developing sql script!')
+        with sqlite3.connect(database_path) as database_handle:
+            with open(sql_script, 'r') as schema:
+                cursor = database_handle.cursor()
+                schema_sql = schema.read()
+                cursor.executescript(schema_sql)
+        sys.exit(0)  # The only command was to initialize the database
 
-    app = notes = Notes(directory_path=ZK_DIR, database_path=ZK_DB)
+    if database_path and not check_database(database_path):
+        raise EnvironmentError('the database is missing')
+
+    if not database_path:
+        # Use In-memory database if the user didn't want to use anything else.
+        # This allows to use zk for open notes without a database.
+        database_path = ':memory:'
+        raise RuntimeError('Not supported yet')
+
+    with sqlite3.connect(database_path) as connection_handle:
+        note_folder = check_open_notes_directory(connection_handle)
+
+    app = notes = Notes(directory_path=note_folder, database_path=database_path)
     open_notes = app.open_notes
     persistent_notes = app.persistent_notes
 
@@ -544,7 +589,6 @@ if __name__ == '__main__':
         elif args[0] == 'new':
             cards = app.open_notes.new_cards(app.persistent_notes)
             print('New cards: ' + str(sorted(cards)))
-
     elif subcommand == 'init':
         pass
 

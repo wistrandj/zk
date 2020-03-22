@@ -1,6 +1,6 @@
 #!/bin/bash
 
-D='/usr/local/src/external/toybox/14'
+D='/usr/local/src/external/zk'
 
 python3 "$D/zk.py" $@
 
