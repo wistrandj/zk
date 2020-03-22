@@ -75,26 +75,6 @@ class NoteFiles:
 
         return card_path
 
-    def modified_cards(self, persistent_notes: 'NoteDatabase') -> Set[str]:
-        open_cards = self.find_all_notes()
-        seconds_to_nanoseconds = 10**9
-        modified_cards = set()
-        for card_name in open_cards:
-            card_path = self.fullpath_of_open_card(card_name)
-            card_modified_at_ns = os.stat(card_path).st_mtime_ns
-            persistent_card_modified_at_sec = persistent_notes.card_modified_utc_time_in_seconds(card_name)
-            persistent_card_modified_at_ns = persistent_card_modified_at_sec * seconds_to_nanoseconds
-
-            if card_modified_at_ns > persistent_card_modified_at_ns:
-                modified_cards.add(card_name)
-
-        return modified_cards
-
-    def new_cards(self, persistent_notes: 'NoteDatabase') -> Set[str]:
-        open_cards = self.find_all_notes()
-        persistent_cards = persistent_notes.find_all_notes()
-        return open_cards.difference(persistent_cards)
-
 
 def modified_cards(note_files: NoteFiles, database_handle: sqlite3.Connection):
     """ @Robustness: Exception safety """
@@ -117,4 +97,17 @@ def modified_cards(note_files: NoteFiles, database_handle: sqlite3.Connection):
                 modified.add(card_name)
 
     return modified
+
+
+def new_cards(note_files: NoteFiles, database_handle: sqlite3.Connection):
+    """ @Robustness: Exception safety """
+    open_cards = note_files.find_all_notes()
+
+    cursor = database_handle.cursor()
+    cursor.execute('select name from notes')
+    list_of_notes = cursor.fetchall()
+    cursor.close()
+
+    notes = set(note[0] for note in list_of_notes)
+    return open_cards.difference(notes)
 

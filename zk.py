@@ -492,7 +492,7 @@ if __name__ == '__main__':
             cards = NF.modified_cards(notes.open_notes, notes.database_handle)
             print('Modified cards: ' + str(sorted(cards)))
         elif args[0] == 'new':
-            cards = app.open_notes.new_cards(app.persistent_notes)
+            cards = NF.new_cards(notes.open_notes, notes.database_handle)
             print('New cards: ' + str(sorted(cards)))
     elif subcommand == '--set-default-directory':
         set_default_location(notes, args[0])
