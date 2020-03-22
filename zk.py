@@ -42,34 +42,6 @@ class Notes:
         return self._sqlite_connection
 
 
-def parse_restrictions(restrictions_file_content: str) -> List[Tuple[str, int, int]]:
-    """ Read restrictions file
-    :return: List of tuples (hostname, from, to)
-    """
-    restrictions = []
-    for line in restrictions_file_content.splitlines():
-        if line.startswith('#'):
-            continue
-
-        hostname, from_idx, to_idx = None, None, None
-
-        for values in line.split():
-            if '=' in values:
-                key, value = values.split('=')
-                if key == 'hostname':
-                    hostname = value
-                elif key == 'from':
-                    from_idx = int(value)
-                elif key == 'to':
-                    to_idx = int(value)
-
-        if hostname and from_idx and to_idx:
-            # @Todo: Check that ranges are not overlapping
-            restrictions.append((hostname, from_idx, to_idx))
-
-    return restrictions
-
-
 def check_database(database_path: str) -> bool:
     """ Check if there's an notes database in the path of giben argument
     @Robustness: Doesn't check if the database is readable and all tables
@@ -93,35 +65,6 @@ def check_open_notes_directory(database_handle: sqlite3.Connection) -> str:
         return note_folder
 
     return os.getcwd()
-
-
-def populate_missing_note_entries_to_database():
-    """ Add open notes in ZK_DIR and add them into database is missing
-    @DeadCode: Merge with the database class
-    """
-    notes = find_open_notes()
-
-    with sqlite3.connect(ZK_DB) as db:
-        cursor = db.cursor()
-        for note in notes:
-            cursor.execute('select 1 from notes where name = ?', (note,))
-            note_in_database = (cursor.fetchone() is not None)
-            if note_in_database:
-                continue
-
-            print('Adding note', note, 'to the database')
-
-            filepath = os.path.join(ZK_DIR, note)
-            stat = os.stat(filepath)
-            created_at  = int(stat.st_ctime)
-            modified_at = int(stat.st_mtime)
-            content = None
-            with open(filepath, 'r') as fd:
-                content = fd.read()
-            sql = ('insert into notes(name, content, created_utc, modified_utc) values (?, ?, ?, ?)')
-            args = (note, content, created_at, modified_at)
-
-            cursor.execute(sql, args)
 
 
 def save_open_notes_into_database(app: Notes):
