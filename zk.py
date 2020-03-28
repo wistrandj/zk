@@ -17,6 +17,8 @@ from note_folder import NoteFiles
 from note_folder import NotesDirectory
 from note_database import NoteDatabase
 import daily
+import scripts.bump_version as bump_version
+import database_init
 
 log = logging.getLogger(__name__)
 
@@ -124,37 +126,28 @@ if __name__ == '__main__':
     subcommand = sys.argv[3]
     args = sys.argv[4:]
 
-    # @Note: Database initialization, execute with subcommands 'init' or 'init-sql <number>'
-    sql_script = None
+    # Database initialization is handled separately from "normal" usage. Usage:
+    #    $ zk --database ./zk.db <init|upgrade 2|rollback 1>
     if subcommand == 'init':
-        developing_directory = os.path.dirname(sys.argv[0])
-        sql_directory = os.path.join(developing_directory, 'sql')
-        sql_script = os.path.join(sql_directory, 'schema.sql')
-    elif subcommand == 'init-sql':
-        # Temporary command for developing. Later: merge sql files into single file
-        developing_directory = os.path.dirname(sys.argv[0])
-        sql_directory = os.path.join(developing_directory, 'sql')
-        sql_number = int(args[0])
-        if sql_number > 0:
-            sql_script = os.path.join(sql_directory, f'schema.{sql_number}.sql')
-    if sql_script:
-        if not os.path.isfile(sql_script):
-            raise EnvironmentError('Invalid developing sql script!')
-        with sqlite3.connect(database_path) as database_handle:
-            with open(sql_script, 'r') as schema:
-                cursor = database_handle.cursor()
-                schema_sql = schema.read()
-                cursor.executescript(schema_sql)
-        sys.exit(0)  # The only command was to initialize the database
+        database_handle = sqlite3.connect(database_path)
+        database_init.initialize_database(database_handle)
+        database_handle.close()
+        sys.exit(0)
+    elif subcommand == 'upgrade':
+        next_version = int(args[0])
+        database_handle = sqlite3.connect(database_path)
+        bump_version.upgrade_version_up(database_handle, next_version)
+        database_handle.close()
+        sys.exit(0)
+    elif subcommand == 'rollback':
+        next_version = int(args[0])
+        database_handle = sqlite3.connect(database_path)
+        bump_version.rollback_version_down(database_handle, next_version)
+        database_handle.close()
+        sys.exit(0)
 
     if database_path and not check_database(database_path):
         raise EnvironmentError('the database is missing')
-
-    if not database_path:
-        # Use In-memory database if the user didn't want to use anything else.
-        # This allows to use zk for open notes without a database.
-        database_path = ':memory:'
-        raise RuntimeError('Not supported yet')
 
     with sqlite3.connect(database_path) as connection_handle:
         note_folder = check_open_notes_directory(connection_handle)
@@ -212,6 +205,13 @@ if __name__ == '__main__':
         set_default_location(notes, args[0])
     elif subcommand == '--remove-default-directory':
         remove_default_location(notes)
+    elif subcommand == 'script':
+        import importlib
+        script_module_name = 'scripts.' + args[0]
+        script_module = importlib.import_module(script_module_name)
+        if not hasattr(script_module, 'run'):
+            raise RuntimeError(f'Invalid script path: {script_module_name}')
+        script_module.run(notes.database_handle)
     else:
         log.info('No command given')
         print('No command given')

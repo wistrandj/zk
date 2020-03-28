@@ -12,3 +12,7 @@ create table daily_notes (
     FOREIGN KEY(card_name) REFERENCES notes(name)
 );
 
+create table default_directory (
+    absolute_path text  -- e.g. /home/<username>/timeline/zk or null for current working directory
+);
+
